@@ -123,13 +123,15 @@ class SettingsViewController: UIViewController {
             }
 
             SectionModel(title: "音视频") {
-                Actions(title: "最高画质", message: "4k以上需要大会员",
+                Actions(title: "最高画质", message: "4K/HDR/杜比需大会员；若该视频无此档会按策略降级",
                         current: Settings.mediaQuality.desp,
                         options: MediaQualityEnum.allCases,
                         optionString: MediaQualityEnum.allCases.map({ $0.desp }))
                 {
                     Settings.mediaQuality = $0
                 }
+                Toggle(title: "只加载可用的最高清晰度", setting: Settings.loadHighestVideoOnly, onChange: Settings.loadHighestVideoOnly.toggle())
+
                 Actions(title: "默认播放速度", message: "默认设置为1.0",
                         current: Settings.mediaPlayerSpeed.name,
                         options: PlaySpeed.blDefaults,

@@ -33,7 +33,7 @@ enum Settings {
     @UserDefault("Settings.direatlyEnterVideo", defaultValue: false)
     static var direatlyEnterVideo: Bool
 
-    @UserDefaultCodable("Settings.mediaQuality", defaultValue: .quality_1080p)
+    @UserDefaultCodable("Settings.mediaQuality", defaultValue: .quality_2160p)
     static var mediaQuality: MediaQualityEnum
 
     @UserDefaultCodable("Settings.mediaPlayerSpeed", defaultValue: PlaySpeed.default)
@@ -257,41 +257,95 @@ extension DanmuArea {
 }
 
 enum MediaQualityEnum: Codable, CaseIterable {
-    case quality_1080p
-    case quality_2160p
-    case quality_hdr_dolby
+    // 底档
+    case quality_360p
+    case quality_480p
+    case quality_720p
+
+    // 1080 系列
+    case quality_1080p // 你原来的“1080p”，我保留
+    case quality_1080p_high // 1080P 高码（80）
+    case quality_1080p_60 // 1080P 60帧（116）
+
+    // 4K / HDR
+    case quality_2160p // 4K（120）
+    case quality_hdr // HDR 真彩（125）
+    case quality_hdr_dolby // 杜比/更高（126）
+
+    // 实验/将来用
+    case quality_8k // 8K / 127
 }
 
 extension MediaQualityEnum {
     var desp: String {
         switch self {
+        case .quality_360p:
+            return "360P"
+        case .quality_480p:
+            return "480P"
+        case .quality_720p:
+            return "720P"
         case .quality_1080p:
-            return "1080p"
+            return "1080P(116)"
+        case .quality_1080p_high:
+            return "1080P高码(80)"
+        case .quality_1080p_60:
+            return "1080P60(116)"
         case .quality_2160p:
-            return "4K"
+            return "4K(120)"
+        case .quality_hdr:
+            return "HDR(125)"
         case .quality_hdr_dolby:
-            return "杜比视界"
+            return "杜比/真·HDR(126)"
+        case .quality_8k:
+            return "8K(127)"
         }
     }
 
     var qn: Int {
         switch self {
+        case .quality_360p:
+            return 16
+        case .quality_480p:
+            return 32
+        case .quality_720p:
+            return 64
+        case .quality_1080p_high:
+            return 80
         case .quality_1080p:
+            return 116
+        case .quality_1080p_60:
             return 116
         case .quality_2160p:
             return 120
+        case .quality_hdr:
+            return 125
         case .quality_hdr_dolby:
             return 126
+        case .quality_8k:
+            return 127
         }
     }
 
     var fnval: Int {
         switch self {
-        case .quality_1080p:
+        case .quality_360p,
+             .quality_480p,
+             .quality_720p,
+             .quality_1080p_high,
+             .quality_1080p,
+             .quality_1080p_60:
+            // 普通档开最小的就行
             return 16
+
         case .quality_2160p:
+            // 4K 要开更高的能力
             return 144
-        case .quality_hdr_dolby:
+
+        case .quality_hdr,
+             .quality_hdr_dolby,
+             .quality_8k:
+            // HDR/杜比/8K 都给高一点的 fnval
             return 976
         }
     }

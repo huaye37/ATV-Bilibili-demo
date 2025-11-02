@@ -423,17 +423,176 @@ extension WebRequest {
         }
     }
 
+    // ✅ 直接替换你原来的这个方法
     static func requestPlayUrl(aid: Int, cid: Int) async throws -> VideoPlayURLInfo {
-        let quality = Settings.mediaQuality
-        return try await request(url: EndPoint.playUrl,
-                                 parameters: ["avid": aid, "cid": cid, "qn": quality.qn, "type": "", "fnver": 0, "fnval": quality.fnval, "otype": "json"])
+        let wanted = Settings.mediaQuality
+
+        // 没开开关：跟原来一模一样，只请求一次
+        if Settings.loadHighestVideoOnly == false {
+            return try await request(
+                url: EndPoint.playUrl,
+                parameters: [
+                    "avid": aid,
+                    "cid": cid,
+                    "qn": wanted.qn,
+                    "type": "",
+                    "fnver": 0,
+                    "fnval": wanted.fnval,
+                    "fourk": 1,
+                    "otype": "json",
+                ]
+            )
+        }
+
+        // 开了“只加载可用的最高清晰度” → 按从高到低试
+        let ladder = buildQualityLadder(from: wanted)
+
+        for q in ladder {
+            do {
+                let info: VideoPlayURLInfo = try await request(
+                    url: EndPoint.playUrl,
+                    parameters: [
+                        "avid": aid,
+                        "cid": cid,
+                        "qn": q.qn,
+                        "type": "",
+                        "fnver": 0,
+                        "fnval": q.fnval,
+                        "fourk": 1,
+                        "otype": "json",
+                    ]
+                )
+                // 这一档要到了，直接用它
+                return info
+            } catch {
+                // 要不到，试下一档
+                continue
+            }
+        }
+
+        throw RequestError.statusFail(code: -1, message: "没有可用的清晰度")
     }
 
+    // ✅ PGC/番剧 播放地址，带“只加载可用的最高清晰度”兜底
     static func requestPcgPlayUrl(aid: Int, cid: Int) async throws -> VideoPlayURLInfo {
-        let quality = Settings.mediaQuality
-        return try await request(url: EndPoint.pcgPlayUrl,
-                                 parameters: ["avid": aid, "cid": cid, "qn": quality.qn, "support_multi_audio": true, "fnver": 0, "fnval": quality.fnval, "fourk": 1],
-                                 dataObj: "result")
+        let wanted = Settings.mediaQuality
+
+        // 没开开关：保持原来的行为，只请求一次
+        if Settings.loadHighestVideoOnly == false {
+            return try await request(
+                url: EndPoint.pcgPlayUrl,
+                parameters: [
+                    "avid": aid,
+                    "cid": cid,
+                    "qn": wanted.qn,
+                    "support_multi_audio": true,
+                    "fnver": 0,
+                    "fnval": wanted.fnval,
+                    "fourk": 1,
+                ],
+                dataObj: "result"
+            )
+        }
+
+        // 开了开关 → 用上面已经写好的 ladder 从高往低试
+        let ladder = buildQualityLadder(from: wanted)
+
+        for q in ladder {
+            do {
+                let info: VideoPlayURLInfo = try await request(
+                    url: EndPoint.pcgPlayUrl,
+                    parameters: [
+                        "avid": aid,
+                        "cid": cid,
+                        "qn": q.qn,
+                        "support_multi_audio": true,
+                        "fnver": 0,
+                        "fnval": q.fnval,
+                        "fourk": 1,
+                    ],
+                    dataObj: "result"
+                )
+                return info
+            } catch {
+                // 这一档要不到就试下一档
+                continue
+            }
+        }
+
+        throw RequestError.statusFail(code: -1, message: "PGC 没有可用的清晰度")
+    }
+
+    // 清晰度降级用的梯度：从高到低
+    private static func buildQualityLadder(from wanted: MediaQualityEnum) -> [MediaQualityEnum] {
+        let all: [MediaQualityEnum] = [
+            .quality_8k,
+            .quality_hdr_dolby,
+            .quality_hdr,
+            .quality_2160p,
+            .quality_1080p_60,
+            .quality_1080p_high,
+            .quality_1080p,
+            .quality_720p,
+            .quality_480p,
+            .quality_360p,
+        ]
+
+        var ladder: [MediaQualityEnum] = [wanted]
+        for q in all where q != wanted {
+            ladder.append(q)
+        }
+        return ladder
+    }
+
+    // 把 "30000/1001" 这种转成 Double，主要是为了挑 120/60/30 帧用的
+    private static func fps(of v: VideoPlayURLInfo.DashInfo.DashMediaInfo) -> Double {
+        guard let fr = v.frame_rate, !fr.isEmpty else { return 0 }
+        let parts = fr.split(separator: "/")
+        if parts.count == 2,
+           let n = Double(parts[0]),
+           let d = Double(parts[1]),
+           d != 0
+        {
+            return n / d
+        }
+        return Double(fr) ?? 0
+    }
+
+    /// 从一次 playurl 返回的 dash 里，挑一条“同清晰度里帧率最高的；实在没有就全局里分辨率最高然后帧率最高”的
+    static func pickBestVideo(from info: VideoPlayURLInfo) -> VideoPlayURLInfo.DashInfo.DashMediaInfo? {
+        let wantedQN = Settings.mediaQuality.qn
+        let videos = info.dash.video
+
+        // ① 先看有没有“和我请求的 qn 一样的”
+        let sameQN = videos.filter { $0.id == wantedQN }
+
+        if !sameQN.isEmpty {
+            // 同一清晰度里：先比帧率，再比带宽
+            return sameQN.sorted { a, b in
+                let fa = fps(of: a)
+                let fb = fps(of: b)
+                if fa == fb {
+                    return a.bandwidth > b.bandwidth
+                }
+                return fa > fb
+            }.first
+        }
+
+        // ② 服务器给不到这一档，可能只给了 1080 或 720，就在所有里挑：
+        //    先比分辨率(width)，再比帧率，再比带宽
+        return videos.sorted { a, b in
+            let wa = a.width ?? 0
+            let wb = b.width ?? 0
+            if wa != wb {
+                return wa > wb
+            }
+            let fa = fps(of: a)
+            let fb = fps(of: b)
+            if fa != fb {
+                return fa > fb
+            }
+            return a.bandwidth > b.bandwidth
+        }.first
     }
 
     static func requestAreaLimitPcgPlayUrl(epid: Int, cid: Int, area: String) async throws -> VideoPlayURLInfo {

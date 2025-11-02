@@ -19,6 +19,9 @@ struct PlayerDetailData {
     var clips: [VideoPlayURLInfo.ClipInfo]?
     var playerInfo: PlayerInfo?
     var videoPlayURLInfo: VideoPlayURLInfo
+
+    // 新增：这一次返回里我们挑出来的“分辨率优先 + 帧率优先”的那条流
+    var bestVideo: VideoPlayURLInfo.DashInfo.DashMediaInfo?
 }
 
 class VideoPlayerViewModel {
@@ -81,29 +84,48 @@ class VideoPlayerViewModel {
 
             if playInfo.isBangumi {
                 do {
+                    // 番剧 / PGC
                     playData = try await WebRequest.requestPcgPlayUrl(aid: aid, cid: cid)
                 } catch let err as RequestError {
                     if case let .statusFail(code, _) = err,
                        code == -404 || code == -10403,
                        let data = try await fetchAreaLimitPcgVideoData()
                     {
+                        // 港澳台走代理
                         playData = data
                     } else {
                         throw err
                     }
                 }
-
                 clipInfos = playData.clip_info_list
             } else {
+                // 普通 UGC
                 playData = try await WebRequest.requestPlayUrl(aid: aid, cid: cid)
             }
+
+            // 这里统一挑一条“最适合播”的视频流（分辨率优先，再看帧率，再看带宽）
+            let best = WebRequest.pickBestVideo(from: playData)
 
             let info = await infoReq
             _ = await detailUpdate
 
-            var detail = PlayerDetailData(aid: playInfo.aid, cid: playInfo.cid!, epid: playInfo.epid, isBangumi: playInfo.isBangumi, detail: videoDetail, clips: clipInfos, playerInfo: info, videoPlayURLInfo: playData)
+            var detail = PlayerDetailData(
+                aid: playInfo.aid,
+                cid: playInfo.cid!,
+                epid: playInfo.epid,
+                isBangumi: playInfo.isBangumi,
+                detail: videoDetail,
+                clips: clipInfos,
+                playerInfo: info,
+                videoPlayURLInfo: playData,
+                bestVideo: best // ⬅️ 新增这一行
+            )
 
-            if let info, info.last_play_cid == cid, playData.dash.duration - info.playTimeInSecond > 5, Settings.continuePlay {
+            if let info,
+               info.last_play_cid == cid,
+               playData.dash.duration - info.playTimeInSecond > 5,
+               Settings.continuePlay
+            {
                 detail.playerStartPos = info.playTimeInSecond
             }
 
@@ -202,11 +224,17 @@ class VideoPlayerViewModel {
         }
 
         if Settings.danmuMask {
+            // 优先用我们刚刚在 fetchVideoData 里挑出来的最高档（分辨率+帧率）
+            let targetVideo = data.bestVideo ?? data.videoPlayURLInfo.dash.video.first
+
             if let mask = data.playerInfo?.dm_mask,
-               let video = data.videoPlayURLInfo.dash.video.first,
+               let video = targetVideo,
                mask.fps > 0
             {
-                let maskProvider = BMaskProvider(info: mask, videoSize: CGSize(width: video.width ?? 0, height: video.height ?? 0))
+                let maskProvider = BMaskProvider(
+                    info: mask,
+                    videoSize: CGSize(width: video.width ?? 0, height: video.height ?? 0)
+                )
                 plugins.append(MaskViewPugin(maskView: danmu.danMuView, maskProvider: maskProvider))
             } else if Settings.vnMask {
                 let maskProvider = VMaskProvider()

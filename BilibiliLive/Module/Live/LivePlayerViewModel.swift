@@ -150,7 +150,11 @@ class LivePlayerViewModel {
         }
 
         allPlayInfos.sort { a, b in
-            return a.formate == "fmp4"
+            // 1. fmp4 的排前面
+            if a.formate == "fmp4", b.formate != "fmp4" { return true }
+            if a.formate != "fmp4", b.formate == "fmp4" { return false }
+            // 2. 清晰度大的排前面
+            return (a.current_qn ?? 0) > (b.current_qn ?? 0)
         }
 
         Logger.debug("all info arry:\(playInfos)")
